@@ -1,2 +1,2 @@
 # nless
-NLess is less clone, mainly just a test.
+NLess is a less clone, mainly just a test.

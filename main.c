@@ -24,9 +24,11 @@
 	cur vars are current x y positions
 	cur_max_y is the current last line
 	max_y/x is the max height/width of screen
+	ln = line numbers
 */
 typedef struct {
 	WINDOW *win;
+	bool ln;
 	size_t max_y, max_x;
 	size_t cur_y, cur_x;
 	size_t old_y, old_x;
@@ -47,6 +49,9 @@ static void mov_right (SCR *scr, BUF *buf);
 static void mov_end (SCR *scr, BUF *buf);
 static void cmd_line_init (SCR *scr, BUF *buf);
 static void draw_buf (SCR *scr, BUF *buf, size_t start_y);
+static void cleanup (SCR *scr, BUF *buf);
+static void quit (SCR *scr, BUF *buf);
+static void scroll_scr (SCR *scr, BUF *buf);
 
 struct KEY_MAP {
 	const int ch;
@@ -68,6 +73,11 @@ struct CMD_MAP {
 	void (*function)(SCR *scr, BUF *buf);
 };
 
+struct CMD_MAP cmd_map[] = {
+	{ "q", quit },
+	{ "q!", quit },
+};
+
 static void mov_left (SCR *scr, BUF *buf)
 {
 	if (scr->cur_x > 0)
@@ -78,15 +88,18 @@ static void mov_left (SCR *scr, BUF *buf)
 static void mov_down (SCR *scr, BUF *buf)
 {
 	if (scr->cur_y > scr->max_y) {
-		scrollok(scr->win, TRUE);
-		wscrl(scr->win, 1);
-		scrollok(scr->win, FALSE);
-		draw_buf(scr, buf, scr->cur_y);
+		scroll_scr(scr, buf);
 		scr->cur_max_y++;
-	}
+	}else
+		scr->cur_y++;
 
-	scr->cur_y++;
 	wmove(scr->win, scr->cur_y, scr->cur_x);
+}
+
+static void quit (SCR *scr, BUF *buf)
+{
+	cleanup(scr, buf);
+	exit(0);
 }
 
 static void mov_up (SCR *scr, BUF *buf)
@@ -94,9 +107,6 @@ static void mov_up (SCR *scr, BUF *buf)
 	
 	if (scr->cur_y > 0) {
 		if (scr->cur_y-- > scr->max_y) {
-			scrollok(scr->win, TRUE);
-			wscrl(scr->win, - 1);
-			scrollok(scr->win, FALSE);
 			draw_buf(scr, buf, scr->cur_y);
 		}
 		scr->cur_y--;
@@ -119,9 +129,25 @@ static void mov_end (SCR *scr, BUF *buf)
 }
 
 // TODO this 
-static bool cmd_parser (const char *cmd)
+static bool cmd_parser (SCR *scr, BUF *buf, const char *cmd)
 {
+	int i = 0;
+	int j = i + 1;
 	
+	while (cmd_map[j].cmd != NULL) {
+		if (strcmp(cmd_map[i].cmd, cmd) == 0)
+			break;
+		else {
+			i++;
+			j = i + 1;
+		}
+	}
+
+	if (strcmp(cmd_map[i].cmd, cmd) == 0)
+		cmd_map[i].function(scr, buf);
+	else
+		return false;
+
 	return true;
 }
 
@@ -132,9 +158,9 @@ static void cmd_line_init (SCR *scr, BUF *buf)
 	mvwprintw(scr->win, height, 0, ":");
 	wrefresh(scr->win);
 	echo();
-	wscanw(scr->win, cmd);
+	wgetstr(scr->win, cmd);
 
-	if (cmd_parser(cmd) == false) {
+	if (cmd_parser(scr, buf, strdup(cmd)) == false) {
 		wprintw(scr->win, "%s is not a nless command!", cmd);
 		wrefresh(scr->win);
 		getch();
@@ -147,23 +173,21 @@ static void cmd_line_init (SCR *scr, BUF *buf)
 	wmove(scr->win, scr->old_y, scr->old_x);
 }
 
+/* a shotty attempt at scrolling */
+static void scroll_scr (SCR *scr, BUF *buf)
+{
+	size_t scroll_start = 0;
+	scroll_start = scr->max_y - scr->cur_y;
+	if (scr->cur_y > scr->max_y)
+		draw_buf(scr, buf, scroll_start);
+}
+
 static void usage (const char *name)
 {
 	fprintf(stdout, "USAGE:\n");
 	fprintf(stdout, "%s [file] (displays the file contents)\n", name);
 	fprintf(stdout, "-h (outputs usage)\n");
 	fprintf(stdout, "-s (outputs screen dimensions, mainly for debugging)\n");
-}
-
-/*
-	converts the scr->max_y
-	to line numbers
-*/
-// TODO 
-static size_t convert_scr_y (size_t max_y)
-{
-	size_t line_numbers = 0;
-	return line_numbers;
 }
 
 /* pretty simple goes to select line number */
@@ -294,8 +318,18 @@ static int curses_setup (SCR *scr)
 static void draw_buf (SCR *scr, BUF *buf, size_t start_y)
 {
 	size_t i;
-	for (i = start_y; i < buf->line_max_y; i++)
-		wprintw(scr->win, "%s", buf->line[i]);
+
+	scr->ln = true;
+	for (i = start_y; i < buf->line_max_y; i++) {
+		if (i < scr->max_y) {
+			if (scr->ln == true)
+				wprintw(scr->win, "%zu %s", i, buf->line[i]);
+			else
+				wprintw(scr->win, "%s", buf->line[i]);
+		} else
+			scr->cur_max_y = i; 
+	}
+
 	wrefresh(scr->win);
 	wmove(scr->win, scr->cur_y, scr->cur_x);
 }
